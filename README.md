@@ -17,4 +17,4 @@ tools/
 
 | Tool | What it does |
 |------|--------------|
-| _(none yet)_ | |
+| [cc-transcript](tools/cc-transcript/) | Convert Claude Code session transcripts (JSONL) to readable Markdown, including after compaction |
