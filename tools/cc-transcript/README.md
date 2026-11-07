@@ -44,11 +44,15 @@ Pipe it into a pager or renderer, e.g. `cc-transcript | glow -p` or `cc-transcri
 
 ## Install
 
+From the repo root:
+
 ```zsh
-ln -s "$PWD/tools/cc-transcript/cc-transcript" ~/.local/bin/cc-transcript
+just install cc-transcript              # copy to ~/.local/bin
+just mode=link install cc-transcript    # or symlink, so repo edits apply immediately
 ```
 
-On Windows, run it with `python path\to\cc-transcript`.
+On Windows this also writes a `cc-transcript.cmd` launcher that runs the script with `python`.
+In link mode the launcher points at the repo copy.
 
 ## Notes
 

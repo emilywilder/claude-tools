@@ -7,6 +7,8 @@ Personal repo of scripts/utilities/programs that help when working with Claude a
 - One folder per tool under `tools/<tool-name>/` (kebab-case name).
 - Every tool gets a `README.md`: one-line purpose, usage example, dependencies.
 - When adding or removing a tool, update the Index table in the root `README.md`.
+- Build/install uses `just`. Every tool has a `tools/<name>/justfile` that imports `../../just/install.just` and defines an `install` recipe (build steps included) that installs into `bindir`, honouring `mode` (`copy`|`link`) where it makes sense. Register each tool with a `mod <name> 'tools/<name>'` line in the root `justfile`. Tag recipes `[unix]`/`[windows]` etc. to match the tool's supported platforms. See "Making a tool installable" in the root `README.md`.
+- Unstable just features are allowed (`set unstable`).
 - Primary targets are Linux and macOS with zsh. Default languages: zsh for shell glue, Python for anything bigger.
 - Other languages are welcome when the task calls for it (e.g. Rust for performance or a single static binary). Briefly note why in the tool's README.
 - Windows/PowerShell is secondary and experimental. Don't make tools cross-platform by default; state the supported platforms in each tool's README.

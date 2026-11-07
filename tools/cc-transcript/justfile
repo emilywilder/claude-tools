@@ -1,0 +1,32 @@
+import '../../just/install.just'
+
+src := source_directory() / "cc-transcript"
+dest := bindir / "cc-transcript"
+
+# Install cc-transcript into bindir
+[unix]
+install:
+    @mkdir -p {{quote(bindir)}}
+    @rm -f {{quote(dest)}}
+    @if [ {{quote(mode)}} = link ]; then \
+        ln -s {{quote(src)}} {{quote(dest)}}; \
+    else \
+        cp {{quote(src)}} {{quote(dest)}} && chmod 755 {{quote(dest)}}; \
+    fi
+    @echo "    {{dest}}"
+
+# Install cc-transcript into bindir, with a .cmd launcher
+[windows]
+[script("pwsh", "-NoLogo", "-NoProfile", "-File")]
+[extension(".ps1")]
+install:
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType Directory -Force -Path '{{bindir}}' | Out-Null
+    if ('{{mode}}' -eq 'link') {
+        $target = '{{src}}'
+    } else {
+        Copy-Item -Force '{{src}}' '{{dest}}'
+        $target = '%~dp0cc-transcript'
+    }
+    Set-Content -Encoding ascii -Path '{{dest}}.cmd' -Value "@python `"$target`" %*"
+    Write-Output "    {{dest}}.cmd"
