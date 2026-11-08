@@ -2,8 +2,6 @@
 
 import 'just/install.just'
 
-set positional-arguments
-
 # One line per tool. A tool supports a platform if its justfile has an
 # `install` recipe for it (plain, or tagged [unix]/[linux]/[macos]/[windows]).
 mod cc-transcript 'tools/cc-transcript'
@@ -13,6 +11,7 @@ default:
     @just --justfile '{{justfile()}}' --list --list-submodules
 
 # Install the named tools, or every tool that supports this platform
+[positional-arguments]
 [script("python3")]
 install *tools:
     import json, os, subprocess, sys
