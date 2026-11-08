@@ -1,6 +1,6 @@
 import '../../just/install.just'
 
-src := source_directory() / "cc-transcript"
+src := source_directory() / "cc-transcript.py"
 dest := bindir / "cc-transcript"
 
 # Install cc-transcript into bindir
