@@ -9,6 +9,7 @@ Each tool lives in its own folder under `tools/`, with a short `README.md` expla
 ```
 justfile             # root: `just install`, plus one `mod` line per tool
 just/install.just    # shared install settings (prefix, bindir, mode)
+just/install.py      # the logic behind `just install`
 tools/
   <tool-name>/
     README.md
