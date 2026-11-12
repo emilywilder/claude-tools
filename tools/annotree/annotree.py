@@ -296,17 +296,21 @@ def open_in_editor(text: str) -> str:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-        stdin = None
-        if not sys.stdin.isatty():  # stdin was our input pipe; give the editor the terminal
+        # If stdin or stdout is a pipe (input list piped in, result piped on to e.g.
+        # `claude -p`), give the editor the terminal instead.
+        def tty(name, mode):
             try:
-                stdin = open("CONIN$" if os.name == "nt" else "/dev/tty")
+                return open(name, mode)
             except OSError:
-                pass
+                return None
+        stdin = None if sys.stdin.isatty() else tty("CONIN$" if os.name == "nt" else "/dev/tty", "r")
+        stdout = None if sys.stdout.isatty() else tty("CONOUT$" if os.name == "nt" else "/dev/tty", "w")
         try:
-            rc = subprocess.run([exe, *cmd[1:], path], stdin=stdin).returncode
+            rc = subprocess.run([exe, *cmd[1:], path], stdin=stdin, stdout=stdout).returncode
         finally:
-            if stdin:
-                stdin.close()
+            for f in (stdin, stdout):
+                if f:
+                    f.close()
         if rc != 0:
             sys.exit(f"annotree: editor exited with status {rc}; nothing copied")
         with open(path, encoding="utf-8") as f:
@@ -437,21 +441,34 @@ def main() -> None:
     if opts.edit:
         text = open_in_editor(text)
 
+    def fail(err: str):
+        if opts.edit:  # don't lose the notes that were just typed
+            fd, saved = tempfile.mkstemp(prefix="annotree-", suffix=".md")
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            warn(f"your edited listing is saved in {saved}")
+        sys.exit(f"annotree: {err}")
+
     if opts.copy:
         err = copy_to_clipboard(text)
         if err:
-            if opts.edit:  # don't lose the notes that were just typed
-                fd, saved = tempfile.mkstemp(prefix="annotree-", suffix=".md")
-                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-                    f.write(text)
-                warn(f"your edited listing is saved in {saved}")
-            sys.exit(f"annotree: {err}")
+            fail(err)
         warn(f"copied {dirs} dirs, {files} files to the clipboard")
     elif opts.output:
-        with open(opts.output, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
+        try:
+            with open(opts.output, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        except OSError as e:
+            fail(f"cannot write {opts.output}: {e}")
     else:
-        sys.stdout.write(text)
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except OSError as e:  # e.g. the reader (`claude -p`) gave up and exited
+            # Point stdout at devnull so the flush at exit doesn't raise again.
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            fail("output pipe closed before the listing was written"
+                 if isinstance(e, BrokenPipeError) else f"cannot write output: {e}")
 
 
 if __name__ == "__main__":

@@ -66,8 +66,22 @@ directories unexpanded. Leave the comment out with `--no-header`.
 | `-c`, `--copy` | Copy to the clipboard instead of printing |
 | `-o FILE` | Write to FILE |
 
-If the clipboard copy fails after `-ec`, annotree saves your edited listing to a temp file and
-prints its path, so your notes aren't lost.
+If the output can't be delivered after `-e` (the clipboard copy fails, the `-o` file can't be
+written, or whatever stdout is piped into has exited), annotree saves your edited listing to a
+temp file and prints its path, so your notes aren't lost.
+
+### Piping into `claude -p`
+
+Don't run `annotree -e | claude -p`. `claude -p` gives up if no input arrives within about 3
+seconds, which is long before you've finished editing. Let annotree finish first:
+
+```zsh
+claude -p "$(annotree -e)"                       # the listing becomes the prompt
+annotree -e -o notes.md && claude -p < notes.md
+```
+
+Without `-e` a plain pipe works, because the listing is written immediately.
+The editor always gets the terminal, even when annotree's stdin or stdout is a pipe.
 
 ## How listings are built
 
