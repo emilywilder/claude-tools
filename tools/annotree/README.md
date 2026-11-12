@@ -9,7 +9,8 @@ It's one Python script, not a zsh script plus a PowerShell script, so both shell
 
 ```zsh
 annotree -ec src             # list src/, open it in $EDITOR, copy the result once you close the editor
-annotree                     # list the current directory to stdout
+annotree                     # list the current directory (one level) to stdout
+annotree -d 0 src            # everything under src/, no depth limit
 annotree -d 2 -D             # directories only, two levels deep
 annotree --at src > todo.md  # paths as @-mentions, for Claude Code
 fd -e py | annotree -c       # annotate a list piped in from another command
@@ -21,13 +22,18 @@ Get-ChildItem -Recurse -Name src | annotree -ec   # pipe names; formatted Get-Ch
 annotree -ec .\src
 ```
 
-The output looks like this:
+The output of `annotree -d 2` looks like this, after filling in some notes:
 
 ```markdown
+<!--
 Here is a file listing of `/home/me/proj`. Under each item is a `> note:` line with my
 instructions or context for that item. A note on a directory is about the directory itself;
 treat it as background for the items inside, not as a separate instruction for each of them.
 An empty note means I have nothing to add for that item.
+
+The listing is 2 levels deep, so directories at the deepest level are shown without their
+contents. To go deeper, re-run annotree with `-d N` for N levels, or `-d 0` for no limit.
+-->
 
 - src/
   > note: legacy code, keep the public API stable
@@ -39,14 +45,17 @@ An empty note means I have nothing to add for that item.
   > note: rewrite the intro
 ```
 
-Fill in the notes and paste it into Claude, along with whatever you want done. You can delete
-the header sentence, or leave it out with `--no-header`.
+Fill in the notes and paste it into Claude, along with whatever you want done.
+
+The instructions at the top are an HTML comment, so Markdown viewers hide them but Claude still
+reads them when you paste. The second paragraph only appears when `--depth` actually left
+directories unexpanded. Leave the comment out with `--no-header`.
 
 ### Options
 
 | Option | Effect |
 |--------|--------|
-| `-d N`, `--depth N` | Descend at most N levels (`1` = top-level entries only) |
+| `-d N`, `--depth N` | Descend at most N levels; `0` = no limit. Default `1` (top-level entries only) for paths, no limit for a piped list |
 | `-D`, `--dirs-only` | Directories only |
 | `-a`, `--all` | Include hidden files and the default excludes (`node_modules`, `__pycache__`, `venv`, `result`) |
 | `-x GLOB`, `--exclude GLOB` | Skip names matching GLOB (repeatable) |
@@ -62,10 +71,11 @@ the header sentence, or leave it out with `--no-header`.
 - **Paths as arguments:** inside a git work tree, annotree lists the files git doesn't ignore
   (tracked and untracked), so `.gitignore` applies. Empty directories don't appear in that mode.
   Outside a repo, or with `--no-git`, it walks the filesystem without following symlinks.
-  Either way, hidden names are skipped unless you pass `-a`.
+  Either way, hidden names are skipped unless you pass `-a`, and the listing stops at one level
+  unless you pass `-d`.
 - **Piped input** (one path per line): when no paths are given and stdin is piped, annotree reads
   the list from stdin, or always does so for `-`. The list is used as given, so hidden files aren't
-  filtered out, but `-x`, `-d` and `-D` still apply. A shared leading directory becomes the root.
+  filtered out and there's no depth limit by default, but `-x`, `-d` and `-D` still apply. A shared leading directory becomes the root.
   An entry counts as a directory if it ends in `/`, other entries sit under it, or it's a
   directory relative to the current directory.
 - Directories sort before files, case-insensitively.

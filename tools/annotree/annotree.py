@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 # Skipped unless --all. Hidden names (leading dot) are skipped too.
 DEFAULT_EXCLUDES = {"node_modules", "__pycache__", "venv", "result"}
@@ -90,6 +92,7 @@ def warn(msg: str) -> None:
 class Builder:
     def __init__(self, opts: argparse.Namespace):
         self.opts = opts
+        self.truncated = False  # some directory was left unexpanded because of --depth
 
     def skip(self, name: str, explicit: bool = False) -> bool:
         if any(fnmatch.fnmatch(name, pat) for pat in self.opts.exclude):
@@ -126,8 +129,11 @@ class Builder:
             if self.opts.dirs_only and not is_dir:
                 continue
             c = node.child(e.name, is_dir)
-            if is_dir and self.deeper(depth):
-                self.walk(c, e.path, depth + 1)
+            if is_dir:
+                if self.deeper(depth):
+                    self.walk(c, e.path, depth + 1)
+                else:
+                    self.truncated = True
 
     def insert(self, node: Node, parts: list[str], fsroot: str | None,
                explicit: bool = False, dir_hint: bool = False) -> None:
@@ -143,6 +149,7 @@ class Builder:
             if i < last:
                 node = node.child(part, True)
                 if not self.deeper(i + 1):
+                    self.truncated = True
                     return  # truncated at --depth: keep the dir, drop its contents
                 continue
             if fsroot is None:
@@ -232,17 +239,35 @@ def git_files(d: str) -> list[str] | None:
 # --------------------------------------------------------------------------- output
 
 
-def render(root: Node, root_label: str | None, opts: argparse.Namespace) -> str:
+def render(root: Node, root_label: str | None, opts: argparse.Namespace,
+           truncated: bool) -> str:
     out: list[str] = []
     if not opts.no_header:
         where = f" of `{root_label}`" if root_label else ""
-        out.append(
+        paras = [
             f"Here is a file listing{where}. Under each item is a `> note:` line with "
             "my instructions or context for that item. A note on a directory is about the "
             "directory itself; treat it as background for the items inside, not as a "
             "separate instruction for each of them. An empty note means I have nothing "
             "to add for that item."
-        )
+        ]
+        if truncated:
+            n = opts.depth
+            paras.append(
+                f"The listing is {n} level{'s' if n != 1 else ''} deep, so directories at "
+                "the deepest level are shown without their contents. To go deeper, re-run "
+                "annotree with `-d N` for N levels, or `-d 0` for no limit."
+            )
+        out.append("<!--")
+        for i, p in enumerate(paras):
+            if i:
+                out.append("")
+            # Keep `code spans` on one line: protect their spaces while wrapping.
+            p = re.sub(r"`[^`]*`", lambda m: m.group().replace(" ", "\0"), p)
+            p = p.replace("--", "- -")  # "--" can't appear inside an HTML comment
+            out.extend(line.replace("\0", " ") for line in
+                       textwrap.wrap(p, 90, break_on_hyphens=False))
+        out.append("-->")
         out.append("")
 
     def walk(node: Node, indent: int) -> None:
@@ -354,7 +379,8 @@ def main() -> None:
                     help="files/directories to list (default: stdin if piped, else .); "
                          "'-' reads stdin")
     ap.add_argument("-d", "--depth", type=int, metavar="N",
-                    help="descend at most N levels (1 = only the top-level entries)")
+                    help="descend at most N levels; 0 = no limit (default: 1 for paths, "
+                         "no limit for a piped list)")
     ap.add_argument("-a", "--all", action="store_true",
                     help="include hidden files and default excludes ("
                          + ", ".join(sorted(DEFAULT_EXCLUDES)) + ")")
@@ -374,19 +400,25 @@ def main() -> None:
     ap.add_argument("-o", "--output", metavar="FILE", help="write to FILE instead of stdout")
     opts = ap.parse_args()
 
-    if opts.depth is not None and opts.depth < 1:
-        ap.error("--depth must be at least 1")
+    if opts.depth is not None and opts.depth < 0:
+        ap.error("--depth can't be negative")
+
+    use_stdin = opts.paths == ["-"] or (not opts.paths and not sys.stdin.isatty())
+    lines = read_stdin_lines() if use_stdin else []
+    from_stdin = any(line.strip() for line in lines)
+    if opts.paths == ["-"] and not from_stdin:
+        sys.exit("annotree: no paths on stdin")
+
+    # A piped list is already the selection you want, so it isn't cut short by default.
+    if opts.depth is None:
+        opts.depth = 0 if from_stdin else 1
+    if opts.depth == 0:
+        opts.depth = None
 
     b = Builder(opts)
-    use_stdin = opts.paths == ["-"] or (not opts.paths and not sys.stdin.isatty())
-    root, label = None, None
-    if use_stdin:
-        lines = read_stdin_lines()
-        if any(line.strip() for line in lines):
-            root, label = b.from_lines(lines)
-        elif opts.paths == ["-"]:
-            sys.exit("annotree: no paths on stdin")
-    if root is None:
+    if from_stdin:
+        root, label = b.from_lines(lines)
+    else:
         root, label = b.from_args([p for p in opts.paths if p != "-"] or ["."])
 
     dirs, files = root.count()
@@ -397,7 +429,7 @@ def main() -> None:
     if opts.at and files > AT_WARN_THRESHOLD:
         warn(f"--at with {files} files: Claude Code will load every one of them into context")
 
-    text = render(root, label, opts)
+    text = render(root, label, opts, b.truncated)
     if opts.edit:
         text = open_in_editor(text)
 
