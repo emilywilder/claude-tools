@@ -4,6 +4,7 @@ import 'just/install.just'
 
 # One line per tool. A tool supports a platform if its justfile has an
 # `install` recipe for it (plain, or tagged [unix]/[linux]/[macos]/[windows]).
+mod annotree 'tools/annotree'
 mod cc-transcript 'tools/cc-transcript'
 
 [private]

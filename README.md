@@ -72,4 +72,5 @@ Notes for writing recipes:
 
 | Tool | What it does |
 |------|--------------|
+| [annotree](tools/annotree/) | Turn a file/directory listing into a Markdown tree to annotate with notes and paste into Claude |
 | [cc-transcript](tools/cc-transcript/) | Convert Claude Code session transcripts (JSONL) to readable Markdown, including after compaction |
