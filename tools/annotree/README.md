@@ -61,10 +61,13 @@ directories unexpanded. Leave the comment out with `--no-header`.
 | `-x GLOB`, `--exclude GLOB` | Skip names matching GLOB (repeatable) |
 | `--no-git` | Walk the filesystem even inside a git repo |
 | `--at` | Write each path as a Claude Code `@path` mention |
-| `--no-header` | Leave out the explanatory sentence |
+| `--no-header` | Leave out the instructions comment |
 | `-e`, `--edit` | Open the result in `$VISUAL` / `$EDITOR` (vi or notepad if neither is set) before output |
 | `-c`, `--copy` | Copy to the clipboard instead of printing |
 | `-o FILE` | Write to FILE |
+
+If the clipboard copy fails after `-ec`, annotree saves your edited listing to a temp file and
+prints its path, so your notes aren't lost.
 
 ## How listings are built
 

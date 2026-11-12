@@ -325,26 +325,30 @@ def is_wsl() -> bool:
         return False
 
 
-def copy_to_clipboard(text: str) -> None:
+def copy_to_clipboard(text: str) -> str | None:
+    """Copy `text` to the clipboard. Returns an error message, or None on success."""
+    def run(cmd: list[str], data: bytes, env: dict | None = None) -> str | None:
+        try:
+            subprocess.run(cmd, input=data, env=env, check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            return f"{cmd[0]} failed: {e}"
+        return None
+
     if os.name == "nt" or (sys.platform.startswith("linux") and is_wsl()):
         clip = shutil.which("clip.exe") or shutil.which("clip")
         if clip:
             data = text.replace("\r\n", "\n").replace("\n", "\r\n")
-            subprocess.run([clip], input=data.encode("utf-16-le"), check=True)
-            return
+            return run([clip], data.encode("utf-16-le"))
     if sys.platform == "darwin":
-        env = dict(os.environ, LC_CTYPE="UTF-8")
-        subprocess.run(["pbcopy"], input=text.encode(), env=env, check=True)
-        return
+        return run(["pbcopy"], text.encode(), dict(os.environ, LC_CTYPE="UTF-8"))
     candidates = []
     if os.environ.get("WAYLAND_DISPLAY"):
         candidates.append(["wl-copy"])
     candidates += [["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]]
     for cmd in candidates:
         if shutil.which(cmd[0]):
-            subprocess.run(cmd, input=text.encode(), check=True)
-            return
-    sys.exit("annotree: no clipboard tool found (need wl-copy, xclip, xsel, pbcopy or clip.exe)")
+            return run(cmd, text.encode())
+    return "no clipboard tool found (need wl-copy, xclip, xsel, pbcopy or clip.exe)"
 
 
 def read_stdin_lines() -> list[str]:
@@ -434,7 +438,14 @@ def main() -> None:
         text = open_in_editor(text)
 
     if opts.copy:
-        copy_to_clipboard(text)
+        err = copy_to_clipboard(text)
+        if err:
+            if opts.edit:  # don't lose the notes that were just typed
+                fd, saved = tempfile.mkstemp(prefix="annotree-", suffix=".md")
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
+                warn(f"your edited listing is saved in {saved}")
+            sys.exit(f"annotree: {err}")
         warn(f"copied {dirs} dirs, {files} files to the clipboard")
     elif opts.output:
         with open(opts.output, "w", encoding="utf-8", newline="\n") as f:
