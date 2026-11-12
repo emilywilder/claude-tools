@@ -400,7 +400,7 @@ def main() -> None:
     ap.add_argument("--at", action="store_true",
                     help="write paths as Claude Code @-mentions, so Claude reads the files")
     ap.add_argument("--no-header", action="store_true",
-                    help="omit the explanatory sentence at the top")
+                    help="leave out the instructions comment at the top")
     ap.add_argument("-e", "--edit", action="store_true",
                     help="open the result in $VISUAL/$EDITOR before output")
     ap.add_argument("-c", "--copy", action="store_true",
