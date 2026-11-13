@@ -285,10 +285,32 @@ def render(root: Node, root_label: str | None, opts: argparse.Namespace,
     return "\n".join(out) + "\n"
 
 
+def split_command(spec: str) -> list[str]:
+    return shlex.split(spec, posix=os.name != "nt")
+
+
+def run_on_terminal(cmd: list[str]) -> int:
+    """Run an interactive program. If our stdin or stdout is a pipe (input list piped
+    in, result piped on to another command), give the program the terminal instead."""
+    def tty(name, mode):
+        try:
+            return open(name, mode)
+        except OSError:
+            return None
+    stdin = None if sys.stdin.isatty() else tty("CONIN$" if os.name == "nt" else "/dev/tty", "r")
+    stdout = None if sys.stdout.isatty() else tty("CONOUT$" if os.name == "nt" else "/dev/tty", "w")
+    try:
+        return subprocess.run(cmd, stdin=stdin, stdout=stdout).returncode
+    finally:
+        for f in (stdin, stdout):
+            if f:
+                f.close()
+
+
 def open_in_editor(text: str) -> str:
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or (
         "notepad" if os.name == "nt" else "vi")
-    cmd = shlex.split(editor, posix=os.name != "nt")
+    cmd = split_command(editor)
     exe = shutil.which(cmd[0])  # resolves e.g. code.cmd on Windows
     if exe is None:
         sys.exit(f"annotree: editor not found: {cmd[0]} (set VISUAL or EDITOR)")
@@ -296,21 +318,7 @@ def open_in_editor(text: str) -> str:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-        # If stdin or stdout is a pipe (input list piped in, result piped on to e.g.
-        # `claude -p`), give the editor the terminal instead.
-        def tty(name, mode):
-            try:
-                return open(name, mode)
-            except OSError:
-                return None
-        stdin = None if sys.stdin.isatty() else tty("CONIN$" if os.name == "nt" else "/dev/tty", "r")
-        stdout = None if sys.stdout.isatty() else tty("CONOUT$" if os.name == "nt" else "/dev/tty", "w")
-        try:
-            rc = subprocess.run([exe, *cmd[1:], path], stdin=stdin, stdout=stdout).returncode
-        finally:
-            for f in (stdin, stdout):
-                if f:
-                    f.close()
+        rc = run_on_terminal([exe, *cmd[1:], path])
         if rc != 0:
             sys.exit(f"annotree: editor exited with status {rc}; nothing copied")
         with open(path, encoding="utf-8") as f:
@@ -355,6 +363,68 @@ def copy_to_clipboard(text: str) -> str | None:
     return "no clipboard tool found (need wl-copy, xclip, xsel, pbcopy or clip.exe)"
 
 
+def claude_command() -> list[str] | str:
+    """The claude command ($ANNOTREE_CLAUDE, default `claude`), or an error message."""
+    cmd = split_command(os.environ.get("ANNOTREE_CLAUDE") or "claude")
+    exe = shutil.which(cmd[0]) if cmd else None
+    if exe is None:
+        return f"{cmd[0] if cmd else 'claude'} not found (set ANNOTREE_CLAUDE)"
+    return [exe, *cmd[1:]]
+
+
+def renderer() -> list[str] | None:
+    """Command to render Markdown answers with: $ANNOTREE_RENDER (empty = none),
+    else `glow -` if it's installed and stdout is a terminal."""
+    spec = os.environ.get("ANNOTREE_RENDER")
+    if spec is None:
+        glow = shutil.which("glow")
+        return [glow, "-"] if glow and sys.stdout.isatty() else None
+    cmd = split_command(spec)
+    if not cmd:
+        return None
+    exe = shutil.which(cmd[0])
+    if exe is None:
+        warn(f"renderer not found: {cmd[0]}; showing the raw answer")
+        return None
+    return [exe, *cmd[1:]]
+
+
+def ask_claude(claude: list[str], text: str) -> str | None:
+    """Send `text` to `claude -p` on stdin and show the answer. Returns an error or None."""
+    render = renderer()
+    warn("waiting for claude...")
+    try:
+        # The listing goes in on stdin right away, so claude doesn't wait for input,
+        # and a long listing doesn't run into command-line length limits.
+        r = subprocess.run([*claude, "-p"], input=text.encode("utf-8"),
+                           stdout=subprocess.PIPE if render else None)
+    except OSError as e:
+        return f"cannot run {claude[0]}: {e}"
+    if r.returncode:
+        return f"claude exited with status {r.returncode}"
+    if render:
+        try:
+            subprocess.run(render, input=r.stdout, check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            warn(f"{os.path.basename(render[0])} failed ({e}); showing the raw answer")
+            sys.stdout.buffer.write(r.stdout)
+            sys.stdout.flush()
+    return None
+
+
+def chat_with_claude(claude: list[str], text: str) -> str | None:
+    """Start an interactive claude session with `text` as the first message."""
+    if os.name == "nt" and claude[0].lower().endswith((".cmd", ".bat")):
+        return (f"--chat can't pass a multi-line message through {os.path.basename(claude[0])}; "
+                "install the native claude.exe or use --ask")
+    try:
+        # `--` so a listing starting with "- " (--no-header) isn't read as an option.
+        rc = run_on_terminal([*claude, "--", text])
+    except OSError as e:  # e.g. the listing is too long for a command line
+        return f"cannot run {claude[0]}: {e}"
+    return f"claude exited with status {rc}" if rc else None
+
+
 def read_stdin_lines() -> list[str]:
     data = sys.stdin.buffer.read().decode("utf-8", "replace").lstrip("﻿")
     lines = data.splitlines()
@@ -381,7 +451,12 @@ def main() -> None:
                     "and paste into Claude.",
         epilog="With no paths and piped input, reads one path per line from stdin "
                "(e.g. `fd | annotree`, `git ls-files | annotree`, "
-               "`Get-ChildItem -Recurse -Name | annotree`).",
+               "`Get-ChildItem -Recurse -Name | annotree`). "
+               "With --ask or --chat, arguments after `--` are passed to claude "
+               "(e.g. `annotree --ask src -- --model sonnet`). "
+               "ANNOTREE_CLAUDE sets the claude command (default: claude); "
+               "ANNOTREE_RENDER sets the --ask renderer (default: `glow -` if installed "
+               "and stdout is a terminal; empty for none).",
     )
     ap.add_argument("paths", nargs="*",
                     help="files/directories to list (default: stdin if piped, else .); "
@@ -403,10 +478,29 @@ def main() -> None:
                     help="leave out the instructions comment at the top")
     ap.add_argument("-e", "--edit", action="store_true",
                     help="open the result in $VISUAL/$EDITOR before output")
-    ap.add_argument("-c", "--copy", action="store_true",
-                    help="copy to the clipboard instead of printing")
-    ap.add_argument("-o", "--output", metavar="FILE", help="write to FILE instead of stdout")
-    opts = ap.parse_args()
+    dest = ap.add_mutually_exclusive_group()
+    dest.add_argument("-c", "--copy", action="store_true",
+                      help="copy to the clipboard instead of printing")
+    dest.add_argument("-o", "--output", metavar="FILE", help="write to FILE instead of stdout")
+    dest.add_argument("--ask", action="store_true",
+                      help="edit, then send the listing to `claude -p` and show the answer")
+    dest.add_argument("--chat", action="store_true",
+                      help="edit, then start an interactive claude session with the listing "
+                           "as the first message")
+
+    # With --ask/--chat, everything after `--` is for claude.
+    argv, claude_args = sys.argv[1:], []
+    if "--" in argv:
+        i = argv.index("--")
+        if "--ask" in argv[:i] or "--chat" in argv[:i]:
+            argv, claude_args = argv[:i], argv[i + 1:]
+    opts = ap.parse_args(argv)
+    if opts.ask or opts.chat:
+        opts.edit = True
+        claude = claude_command()
+        if isinstance(claude, str):  # check before the editing, not after
+            sys.exit(f"annotree: {claude}")
+        claude += claude_args
 
     if opts.depth is not None and opts.depth < 0:
         ap.error("--depth can't be negative")
@@ -439,7 +533,10 @@ def main() -> None:
 
     text = render(root, label, opts, b.truncated)
     if opts.edit:
+        original = text
         text = open_in_editor(text)
+        if (opts.ask or opts.chat) and text == original:
+            sys.exit("annotree: no notes added, so nothing was sent to claude")
 
     def fail(err: str):
         if opts.edit:  # don't lose the notes that were just typed
@@ -449,7 +546,14 @@ def main() -> None:
             warn(f"your edited listing is saved in {saved}")
         sys.exit(f"annotree: {err}")
 
-    if opts.copy:
+    if opts.ask or opts.chat:
+        try:
+            err = (ask_claude if opts.ask else chat_with_claude)(claude, text)
+        except KeyboardInterrupt:
+            err = "interrupted"
+        if err:
+            fail(err)
+    elif opts.copy:
         err = copy_to_clipboard(text)
         if err:
             fail(err)
